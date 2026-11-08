@@ -4,7 +4,9 @@
 
 先安装 Microsoft Store 版 Codex 并登录，再安装 Node.js LTS（22 或更新版本）。下载 Release 中的 win-x64.zip，完整解压到固定文件夹。
 
-正常退出已经打开的 Codex，再双击 Codex-TokenBar.exe，即可启动 Codex 和统计。以后也从这个入口打开。
+双击 Codex-TokenBar.exe，即可启动 Codex 和统计。以后也从这个入口打开，重复点击会将已有窗口切到前台。
+
+启动器自动检查 Node.js，缺失或版本不兼容时直接提示安装地址。首次使用时，如果 Codex 已从官方图标打开，请先正常退出一次，再双击 Codex-TokenBar.exe。
 
 需要任务栏入口时，双击创建快捷方式.exe，将 outputs 文件夹里的 Codex-TokenBar.lnk 固定到任务栏。移动文件夹后重新创建快捷方式。启动遇到问题时，再运行环境检查.exe 查看原因。
 
@@ -28,7 +30,7 @@
 
 ### 提示找不到 Node.js
 
-从 Node.js 官网安装 LTS 版本，完成后关闭并重新打开环境检查.exe。若仍失败，确认安装时已添加 PATH；也可在 Windows 终端运行 node --version 检查。
+按启动窗口提示安装 Node.js LTS，完成后重新双击 Codex-TokenBar.exe。若仍提示缺失，重新运行 Node.js 安装程序，确保启用添加到 PATH 的选项。
 
 ### Codex 已打开，但没有统计
 
@@ -36,7 +38,7 @@
 
 ### 任务栏出现两个图标
 
-取消旧 TokenBar 图标的固定，运行创建快捷方式.exe，然后固定 outputs 中生成的 Codex-TokenBar.lnk。首次使用请选择配套快捷方式。
+如需固定任务栏，取消旧 TokenBar 图标的固定，运行创建快捷方式.exe，然后固定 outputs 中生成的 Codex-TokenBar.lnk。也可直接使用根目录的 Codex-TokenBar.exe。
 
 ### 停止统计与恢复原版
 
@@ -44,9 +46,14 @@
 
 ### 更新版本
 
-先关闭统计，将新版完整解压到目标文件夹，再创建并固定新版快捷方式。保留完整目录结构。运行记录位于 work 文件夹，会话原始数据由 Codex 管理。
+先关闭统计，将新版完整解压到目标文件夹，再双击新版 Codex-TokenBar.exe。如果使用了任务栏快捷方式，再创建并固定新版快捷方式。保留完整目录结构。运行记录位于 work 文件夹，会话原始数据由 Codex 管理。
 
-## 自动恢复与诊断
+## 自动恢复
+
+连接短暂中断时，后台会自动尝试恢复。若仍没有统计，双击关闭统计.exe，再重新打开 Codex-TokenBar.exe。
+
+<details>
+<summary>开发诊断与连接细节</summary>
 
 启动脚本持有单实例锁，初次传输连接最多三次尝试。运行中断线按 1、2、4 秒间隔最多重新附加三次，每次重新验证官方安装、进程、监听及目标页面。恢复次数在本次启动期间累计。
 
@@ -64,3 +71,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/Start-TokenBar
 请结合更新时间判断当前状态。reconnecting 表示正在重试；reconnect-exhausted 表示恢复额度耗尽；validation-failed 表示进程或监听校验失败；incompatible-or-failed 表示目标、协议或页面执行异常。
 
 完整实测范围见 [验证记录](validation.md)。
+
+</details>
