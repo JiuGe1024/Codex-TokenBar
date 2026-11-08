@@ -38,11 +38,12 @@ test('portable ZIP contains relocatable entrypoints and excludes local data; che
     const unpack = path.join(f.root, 'unpacked');
     await run('powershell.exe', ['-NoProfile', '-Command', `Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Archive') -Force; Expand-Archive -LiteralPath '${path.join(f.root, archive)}' -DestinationPath '${unpack}'`], { windowsHide: true, timeout: 15000 });
     const root = path.join(unpack, 'Codex-TokenBar');
-    for (const file of ['Codex-TokenBar.exe', '环境检查.exe', '创建快捷方式.exe', '关闭统计.exe', '打开原版.exe', 'scripts/Resolve-Node.ps1', 'scripts/Setup-TokenBar.ps1', 'src/cdp.mjs', 'docs/usage.md']) await fs.access(path.join(root, file));
+    for (const file of ['Codex-TokenBar.exe', 'scripts/Resolve-Node.ps1', 'src/cdp.mjs', 'docs/usage.md']) await fs.access(path.join(root, file));
+    assert.deepEqual((await fs.readdir(root)).filter(name => /\.(exe|lnk)$/i.test(name)), ['Codex-TokenBar.exe']);
     for (const file of ['work', 'node_modules', 'STATE.md', 'HANDOFF.md', 'scripts/Start-TokenBar.local.ps1', '.git']) await assert.rejects(fs.access(path.join(root, file)));
     // Exercise filename dispatch and root-directory resolution with an isolated stop stub.
     await fs.writeFile(path.join(root, 'scripts/Stop-TokenBar.ps1'), "Set-Content -LiteralPath (Join-Path $PSScriptRoot '../stopped') -Value 'yes'\n");
-    await run(path.join(root, '关闭统计.exe'), [], { windowsHide: true, timeout: 10000 });
+    await run(path.join(root, 'Codex-TokenBar.exe'), ['--stop'], { windowsHide: true, timeout: 10000 });
     assert.equal((await fs.readFile(path.join(root, 'stopped'), 'utf8')).trim(), 'yes');
   } finally { await f.cleanup(); }
 });
