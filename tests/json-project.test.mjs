@@ -14,13 +14,16 @@ test('projection discards conversation, credentials and tool bodies even when th
   assert.equal(projectUsageRecord(JSON.stringify({ type: 'response_item', payload: { type: 'message', content: raw } })), null);
 });
 
-test('timing projection keeps official turn duration and skips partial item windows', () => {
+test('timing projection keeps only lifecycle identifiers, kinds and numeric times', () => {
   const raw = JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-id',
     duration_ms: 54489, last_agent_message: 'DO_NOT_KEEP' } });
   const projected = projectUsageRecord(raw);
   assert.equal(projected.payload.duration_ms, 54489);
   assert.equal(JSON.stringify(projected).includes('DO_NOT_KEEP'), false);
-  assert.equal(projectUsageRecord(JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed' } })), null);
+  const item = projectUsageRecord(JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { id: 'tool-a', type: 'CommandExecution', command: ['DO_NOT_KEEP'], aggregated_output: 'DO_NOT_KEEP' }, started_at_ms: 100, completed_at_ms: 200 } }));
+  assert.equal(item.payload.item.id, 'tool-a');
+  assert.equal(item.payload.completed_at_ms, 200);
+  assert.equal(JSON.stringify(item).includes('DO_NOT_KEEP'), false);
 });
 
 test('unknown subtrees are skipped; selected duplicate keys, malformed JSON and wrong types fail closed', () => {

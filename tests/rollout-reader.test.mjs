@@ -35,3 +35,34 @@ test('incremental reader handles split UTF-8 and partial lines, then resets afte
     assert.equal(reader.state.row(turn), null, 'truncation clears old snapshots');
   } finally { await fs.rm(folder, { recursive: true, force: true }); }
 });
+
+test('large fragmented lines retain owned bytes once, and oversized lines release pending memory', () => {
+  const reader = new RolloutReader('unused', thread);
+  const bytes = Buffer.from(header + started + line({ type: 'response_item', payload: { content: 'x'.repeat(2 * 1024 * 1024) } }) + modern + complete);
+  const reusable = Buffer.alloc(64 * 1024);
+  for (let offset = 0; offset < bytes.length; offset += reusable.length) {
+    const length = Math.min(reusable.length, bytes.length - offset);
+    bytes.copy(reusable, 0, offset, offset + length);
+    reader.consume(reusable.subarray(0, length));
+    reusable.fill(0);
+  }
+  assert.equal(reader.state.row(turn).turn.total, 110);
+  assert.equal(reader.pendingBytes, 0);
+  assert.equal(reader.pendingChunks.length, 0);
+  for (let i = 0; i < 257; i++) reader.consume(Buffer.alloc(64 * 1024, 120));
+  assert.equal(reader.droppingOversized, true);
+  assert.equal(reader.pendingBytes, 0);
+  assert.equal(reader.pendingChunks.length, 0);
+  reader.consume(Buffer.from('\n'));
+  assert.equal(reader.droppingOversized, false);
+  assert.equal(reader.state.warningCounts['oversized-record-skipped'], 1);
+});
+
+test('duplicate rollout identities do not select an arbitrary historical file', async () => {
+  const folder = await fs.mkdtemp(path.resolve('work/reader-duplicate-'));
+  try {
+    await fs.writeFile(path.join(folder, `rollout-a-${thread}.jsonl`), header);
+    await fs.writeFile(path.join(folder, `rollout-b-${thread}.jsonl`), header);
+    assert.equal(await findRollout(folder, thread), null);
+  } finally { await fs.rm(folder, { recursive: true, force: true }); }
+});

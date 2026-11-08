@@ -37,7 +37,8 @@ export class RolloutReader {
   reset() {
     this.state = new UsageState(this.threadId);
     this.offset = 0;
-    this.pending = Buffer.alloc(0);
+    this.pendingChunks = [];
+    this.pendingBytes = 0;
     this.droppingOversized = false;
     this.identity = null;
     this.mtime = null;
@@ -46,22 +47,28 @@ export class RolloutReader {
     let start = 0;
     for (let end = bytes.indexOf(10); end !== -1; end = bytes.indexOf(10, start)) {
       const part = bytes.subarray(start, end);
-      if (!this.droppingOversized && this.pending.length + part.length <= MAX_LINE_BYTES) {
-        const line = this.pending.length ? Buffer.concat([this.pending, part]) : part;
+      if (!this.droppingOversized && this.pendingBytes + part.length <= MAX_LINE_BYTES) {
+        const line = this.pendingBytes ? Buffer.concat([...this.pendingChunks, part], this.pendingBytes + part.length) : part;
         if (line.length) {
           try { this.state.apply(projectUsageRecord(decoder.decode(line))); }
           catch { this.state.invalidateActive('invalid-record-skipped'); }
         }
       } else this.state.invalidateActive('oversized-record-skipped');
-      this.pending = Buffer.alloc(0);
+      this.pendingChunks = [];
+      this.pendingBytes = 0;
       this.droppingOversized = false;
       start = end + 1;
     }
     const tail = bytes.subarray(start);
-    if (this.pending.length + tail.length > MAX_LINE_BYTES) {
-      this.pending = Buffer.alloc(0);
+    if (this.pendingBytes + tail.length > MAX_LINE_BYTES) {
+      this.pendingChunks = [];
+      this.pendingBytes = 0;
       this.droppingOversized = true;
-    } else if (!this.droppingOversized) this.pending = Buffer.concat([this.pending, tail]);
+    } else if (!this.droppingOversized && tail.length) {
+      // The read buffer is reused, so retain an owned copy of each fragment.
+      this.pendingChunks.push(Buffer.from(tail));
+      this.pendingBytes += tail.length;
+    }
   }
   async poll() {
     // Open with 'r' only, never rw/a/w. Read a bounded snapshot of appended bytes;

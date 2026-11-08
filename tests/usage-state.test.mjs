@@ -12,15 +12,55 @@ export const record = (turnId, response, own, turn = own, total = turn) => ({ ty
   thread_id: thread, turn_id: turnId, response_id: response, usage: own, turn_token_usage: turn, thread_token_usage: total,
 } });
 
-test('average speed uses full turn duration even when model timing records are missing', () => {
+test('duration without tools retains waiting time and requires lifecycle timing evidence', () => {
   for (const duration of [54489, undefined, 0, -1]) {
     const s = new UsageState(thread); s.apply(header()); s.apply(event('task_started', turnA));
     s.apply(record(turnA, 'response', rawUsage(538769, 530000, 928)));
-    s.apply({ type: 'event_msg', payload: { type: 'task_complete', turn_id: turnA, duration_ms: duration } });
+    s.apply({ type: 'event_msg', payload: { type: 'item_completed', turn_id: turnA, item: { id: 'model', type: 'AgentMessage' }, started_at_ms: 60000, completed_at_ms: 61000 } });
+    s.apply({ type: 'event_msg', timestamp: new Date(100000).toISOString(), payload: { type: 'task_complete', turn_id: turnA, duration_ms: duration } });
     const row = s.row(turnA);
     assert.equal(row.speed, duration > 0 ? 928000 / duration : null);
     assert.equal(row.durationMs, duration >= 0 ? duration : null);
     if (duration > 0) assert.ok(Math.abs(row.speed * row.durationMs / 1000 - row.turn.output) < 1e-9);
+  }
+});
+
+test('tool union is deducted once, clipped to the turn, with model overlap preserved', () => {
+  const s = new UsageState(thread); s.apply(header()); s.apply(event('task_started', turnA));
+  s.apply(record(turnA, 'response', rawUsage(100, 80, 600)));
+  const item = (id, type, start, end, kind) => ({ type: 'event_msg', payload: { type: 'item_completed', turn_id: turnA,
+    item: { id, type, kind }, started_at_ms: start, completed_at_ms: end } });
+  s.apply(item('tool-a', 'CommandExecution', 2000, 6000));
+  s.apply(item('tool-b', 'McpToolCall', 4000, 8000));
+  s.apply(item('tool-a', 'CommandExecution', 2000, 6000));
+  s.apply(item('model-a', 'Reasoning', 4000, 5000));
+  s.apply(item('model-b', 'AgentMessage', 6000, 7000));
+  s.apply(item('web', 'Extension', 5000, 5500, 'web.search'));
+  s.apply(item('outside', 'FileChange', 12000, 13000));
+  s.apply({ type: 'event_msg', timestamp: new Date(11000).toISOString(), payload: { type: 'task_complete', turn_id: turnA, duration_ms: 10000 } });
+  assert.equal(s.row(turnA).durationMs, 6000);
+  assert.equal(s.row(turnA).speed, 100);
+  // A late lifecycle completion only deducts its portion inside this turn.
+  s.apply(item('late', 'ImageView', 10000, 12000));
+  assert.equal(s.row(turnA).durationMs, 5000);
+  assert.equal(s.row(turnA).speed, 120);
+  s.apply(item('tool-a', 'CommandExecution', 2000, 6500));
+  assert.equal(s.row(turnA).durationMs, null);
+  assert.equal(s.row(turnA).turn.output, 600);
+});
+
+test('missing, reversed or unknown timing yields unknown duration and speed without losing tokens', () => {
+  for (const payload of [null,
+    { item: { id: 'bad', type: 'CommandExecution' }, started_at_ms: 3000, completed_at_ms: 2000 },
+    { item: { id: 'new', type: 'Extension', kind: 'unknown' }, started_at_ms: 2000, completed_at_ms: 3000 },
+  ]) {
+    const s = new UsageState(thread); s.apply(header()); s.apply(event('task_started', turnA));
+    s.apply(record(turnA, 'response', rawUsage(100, 80, 10)));
+    if (payload) s.apply({ type: 'event_msg', payload: { type: 'item_completed', turn_id: turnA, ...payload } });
+    s.apply({ type: 'event_msg', timestamp: new Date(11000).toISOString(), payload: { type: 'task_complete', turn_id: turnA, duration_ms: 10000 } });
+    assert.equal(s.row(turnA).durationMs, null);
+    assert.equal(s.row(turnA).speed, null);
+    assert.equal(s.row(turnA).turn.total, 110);
   }
 });
 
@@ -85,4 +125,34 @@ test('malformed intervals taint active rounds and forked/incorrect headers canno
   const fork = new UsageState(thread); const meta = header(); meta.payload.parent_thread_id = turnB; fork.apply(meta);
   fork.apply(event('task_started', turnA)); fork.apply(record(turnA, 'r', rawUsage(10, 5, 1))); fork.apply(event('task_complete', turnA));
   assert.equal(fork.row(turnA), null);
+});
+
+test('late conflicting responses invalidate stale snapshots and reused response IDs cannot count in another turn', () => {
+  const s = new UsageState(thread); s.apply(header()); s.apply(event('task_started', turnA));
+  s.apply(record(turnA, 'reused', rawUsage(100, 80, 10))); s.apply(event('task_complete', turnA));
+  s.apply(event('task_started', turnB));
+  s.apply(record(turnB, 'reused', rawUsage(100, 80, 10), rawUsage(100, 80, 10), rawUsage(200, 160, 20)));
+  s.apply(event('task_complete', turnB));
+  assert.equal(s.row(turnA).turn, null);
+  assert.equal(s.row(turnA).cumulative, null);
+  assert.equal(s.row(turnB).turn, null);
+  assert.equal(s.row(turnB).cumulative, null);
+
+  const late = new UsageState(thread); late.apply(header()); late.apply(event('task_started', turnA));
+  late.apply(record(turnA, 'a', rawUsage(100, 80, 10))); late.apply(event('task_complete', turnA));
+  late.apply(record(turnA, 'a', rawUsage(100, 80, 11)));
+  assert.equal(late.row(turnA).turn, null);
+  assert.equal(late.row(turnA).cumulative, null);
+});
+
+test('cache counter regression and invalid late usage never preserve a stale cumulative snapshot', () => {
+  const s = new UsageState(thread); s.apply(header()); s.apply(event('task_started', turnA));
+  s.apply(record(turnA, 'a', rawUsage(100, 80, 10))); s.apply(event('task_complete', turnA));
+  s.apply(event('task_started', turnB));
+  s.apply(record(turnB, 'b', rawUsage(100, 0, 10), rawUsage(100, 0, 10), rawUsage(200, 70, 20)));
+  s.apply(event('task_complete', turnB));
+  assert.equal(s.row(turnB).cumulative, null);
+  assert.equal(s.row(turnA).cumulative.total, 110);
+  s.apply(record(turnA, 'invalid', { input_tokens: 1, output_tokens: 1 }));
+  assert.equal(s.row(turnA).cumulative, null);
 });

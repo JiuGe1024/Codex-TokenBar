@@ -11,6 +11,39 @@ export function usage(value) {
 }
 
 const equalUsage = (a, b) => a && b && ['input', 'output', 'total', 'cached'].every((key) => a[key] === b[key]);
+const modelItems = new Set(['Reasoning', 'AgentMessage', 'Plan']);
+const toolItems = new Set(['CommandExecution', 'FileChange', 'McpToolCall', 'WebSearch', 'ImageView', 'DynamicToolCall', 'CollabAgentToolCall', 'ImageGeneration']);
+function unionIntervals(intervals) {
+  const merged = [];
+  for (const interval of intervals.sort((a, b) => a[0] - b[0])) {
+    const last = merged.at(-1);
+    if (last && interval[0] <= last[1]) last[1] = Math.max(last[1], interval[1]);
+    else merged.push([...interval]);
+  }
+  return merged;
+}
+function durationWithoutTools(turn) {
+  if (!count(turn.durationMs) || !count(turn.completedAtMs) || turn.timingInvalid || !turn.items.size) return null;
+  const start = turn.completedAtMs - turn.durationMs;
+  if (!count(start)) return null;
+  const tools = [], models = [];
+  for (const item of turn.items.values()) {
+    const interval = [Math.max(start, item.start), Math.min(turn.completedAtMs, item.end)];
+    if (interval[1] > interval[0]) (item.tool ? tools : models).push(interval);
+  }
+  const toolUnion = unionIntervals(tools), modelUnion = unionIntervals(models);
+  let toolMs = toolUnion.reduce((sum, [a, b]) => sum + b - a, 0);
+  // Preserve observed model activity that overlaps tools. Parallel tools and
+  // repeated lifecycle notifications must never subtract the same time twice.
+  let modelIndex = 0;
+  for (const [a, b] of toolUnion) {
+    while (modelIndex < modelUnion.length && modelUnion[modelIndex][1] <= a) modelIndex++;
+    for (let i = modelIndex; i < modelUnion.length && modelUnion[i][0] < b; i++) {
+      toolMs -= Math.max(0, Math.min(b, modelUnion[i][1]) - Math.max(a, modelUnion[i][0]));
+    }
+  }
+  return turn.durationMs - toolMs;
+}
 function sumUsage(values) {
   const total = { input: 0, output: 0, total: 0, cached: 0 };
   for (const item of values) {
@@ -31,6 +64,7 @@ export class UsageState {
     this.threadId = threadId.toLowerCase();
     this.headerValid = false;
     this.turns = new Map();
+    this.responseTurns = new Map();
     this.latest = null;
     this.modernSeen = false;
     this.counterConflict = false;
@@ -40,19 +74,20 @@ export class UsageState {
   warn(key) { this.warningCounts[key] = (this.warningCounts[key] ?? 0) + 1; }
   invalidateActive(reason) {
     this.warn(reason);
-    for (const turn of this.turns.values()) if (!turn.complete) turn.conflict = true;
+    for (const turn of this.turns.values()) if (!turn.complete) { turn.conflict = true; turn.timingInvalid = true; }
     this.latest = null;
   }
   turn(id) {
     if (!isUuid(id)) return null;
     id = id.toLowerCase();
     if (!this.turns.has(id)) this.turns.set(id, { id, started: false, complete: false, responses: new Map(), candidate: null, conflict: false, cumulative: null,
-      durationMs: null });
+      durationMs: null, completedAtMs: null, items: new Map(), timingInvalid: false });
     return this.turns.get(id);
   }
   cumulative(snapshot) {
     if (!snapshot) { this.warn('invalid-cumulative'); this.latest = null; return; }
-    if (this.latest && ['input', 'output', 'total'].some((k) => snapshot[k] < this.latest[k])) {
+    if (this.latest && (['input', 'output', 'total'].some((k) => snapshot[k] < this.latest[k])
+      || (snapshot.cached !== null && this.latest.cached !== null && snapshot.cached < this.latest.cached))) {
       this.counterConflict = true;
       this.warn('cumulative-reset-or-regression');
     }
@@ -76,16 +111,26 @@ export class UsageState {
       const candidate = usage(p.turn_token_usage);
       if (!own || typeof p.response_id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(p.response_id)) {
         turn.conflict = true;
+        turn.cumulative = null;
+        this.latest = null;
         this.warn('invalid-response-usage-or-id');
+        return;
+      }
+      const owner = this.responseTurns.get(p.response_id);
+      if (owner && owner !== turn) {
+        owner.conflict = turn.conflict = true;
+        owner.cumulative = turn.cumulative = this.latest = null;
+        this.warn('response-id-reused-across-turns');
         return;
       }
       const previous = turn.responses.get(p.response_id);
       if (previous) {
         this.duplicates++;
-        if (!equalUsage(previous, own)) { turn.conflict = true; this.latest = null; this.warn('conflicting-response-duplicate'); }
+        if (!equalUsage(previous, own)) { turn.conflict = true; turn.cumulative = this.latest = null; this.warn('conflicting-response-duplicate'); }
         return;
       }
       turn.responses.set(p.response_id, own);
+      this.responseTurns.set(p.response_id, turn);
       turn.candidate = candidate;
       this.modernSeen = true;
       this.cumulative(cumulative);
@@ -100,13 +145,38 @@ export class UsageState {
     }
     const direct = p.turn_id;
     const attributed = p.turn_attribution?.turn_id;
-    if (direct && attributed && direct.toLowerCase() !== attributed.toLowerCase()) { this.warn('ambiguous-turn-attribution'); return; }
+    if (direct && attributed && direct.toLowerCase() !== attributed.toLowerCase()) {
+      if (p.type === 'item_completed') for (const id of [direct, attributed]) {
+        const affected = this.turns.get(id.toLowerCase());
+        if (affected) affected.timingInvalid = true;
+      }
+      this.warn('ambiguous-turn-attribution');
+      return;
+    }
     const turn = this.turn(direct ?? attributed);
     if (!turn) { this.warn('missing-task-turn-id'); return; }
+    if (p.type === 'item_completed') {
+      if (p.item?.type === 'UserMessage') return;
+      const tool = toolItems.has(p.item?.type) || (p.item?.type === 'Extension' && p.item.kind === 'web.search');
+      const known = tool || modelItems.has(p.item?.type);
+      const id = p.item?.id, start = p.started_at_ms, end = p.completed_at_ms;
+      if (!known || typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(id) || !count(start) || !count(end) || end < start) {
+        if (!turn.timingInvalid) this.warn('unknown-or-invalid-item-timing');
+        turn.timingInvalid = true;
+        return;
+      }
+      const previous = turn.items.get(id);
+      if (previous && (previous.start !== start || previous.end !== end || previous.tool !== tool)) {
+        turn.timingInvalid = true;
+        this.warn('conflicting-item-timing');
+      } else turn.items.set(id, { start, end, tool });
+      return;
+    }
     if (p.type === 'task_started') turn.started = true;
     if (p.type === 'task_complete' && !turn.complete) {
       turn.complete = true;
       turn.durationMs = count(p.duration_ms) ? p.duration_ms : null;
+      turn.completedAtMs = typeof row.timestamp === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(row.timestamp) ? Date.parse(row.timestamp) : null;
       turn.cumulative = this.counterConflict ? null : this.latest;
     }
   }
@@ -120,9 +190,10 @@ export class UsageState {
     const cacheMatches = sum?.cached == null || turn.candidate?.cached == null || sum.cached === turn.candidate.cached;
     const valid = turn.started && turn.responses.size > 0 && !turn.conflict && totalsMatch && cacheMatches;
     const own = valid ? { ...sum, cached: sum.cached === null || turn.candidate.cached === null ? null : sum.cached } : null;
-    const speed = own && turn.durationMs > 0 ? own.output * 1000 / turn.durationMs : null;
+    const durationMs = durationWithoutTools(turn);
+    const speed = own && durationMs > 0 ? own.output * 1000 / durationMs : null;
     return { turnId: turn.id, turn: own, cumulative: turn.cumulative,
-      speed: Number.isFinite(speed) ? speed : null, durationMs: turn.durationMs };
+      speed: Number.isFinite(speed) ? speed : null, durationMs };
   }
   snapshot(turnIds) {
     return { threadId: this.threadId, rows: turnIds.map((id) => this.row(id)).filter(Boolean) };

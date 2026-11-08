@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$OriginalOnly)
+param([switch]$OriginalOnly, [switch]$FocusOnly)
 $ErrorActionPreference = 'Stop'
 $packages = @(Get-AppxPackage -Name OpenAI.Codex)
 if ($packages.Count -ne 1) { throw 'Codex Store package is not unique.' }
@@ -34,6 +34,7 @@ namespace TokenBarLaunch {
   [pscustomobject]@{ originalOnly = [bool]$OriginalOnly; packageVersion = [string]$package.Version }
   return
 }
+if ($FocusOnly) { return }
 # Compatibility is checked against live identifiers, layout and usage records,
 # rather than a release number. Original mode never enables debugging.
 $arguments = if (!$OriginalOnly) { '--remote-debugging-address=127.0.0.1 --remote-debugging-port=9337' } else { '' }

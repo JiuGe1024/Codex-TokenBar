@@ -23,11 +23,17 @@ export function pageContext() {
 export function installUsageView(readContext) {
   const key = '__codexTokenBar';
   if (window[key]) return { ok: true, existing: true };
+  if (typeof ResizeObserver !== 'function' || typeof MutationObserver !== 'function'
+    || typeof HTMLElement.prototype.showPopover !== 'function' || typeof HTMLElement.prototype.hidePopover !== 'function'
+    || typeof HTMLElement.prototype.attachShadow !== 'function') {
+    return { ok: false, reason: 'unsupported-browser-capabilities' };
+  }
   const hidden = '[data-app-shell-active-page="false"], [aria-hidden="true"], [inert]';
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const mounts = new Map();
   const internalNodes = new WeakSet();
   let data = { threadId: null, rows: [] };
+  let diagnostics = {};
   let timer, lease, observer, sizes, stopped = false;
   const removeHost = (host) => { internalNodes.add(host); host.remove(); };
   const clear = () => { for (const { host } of mounts.values()) removeHost(host); mounts.clear(); sizes?.disconnect(); };
@@ -76,8 +82,9 @@ export function installUsageView(readContext) {
     }
     positionPanel(host);
   }
-  function reconcile() {
+  function reconcileLayout() {
     if (stopped) return;
+    diagnostics = { ambiguousAnchors: 0, unsupportedLayout: 0, invalidGeometry: 0 };
     const context = readContext();
     if (!context.threadId || context.threadId !== data.threadId) { clear(); return; }
     const rows = new Map(data.rows.map((r) => [r.turnId, r]));
@@ -94,18 +101,20 @@ export function installUsageView(readContext) {
     }
     for (const [id, entry] of mounts) {
       const list = candidates.get(id);
-      if (list?.length !== 1 || list[0] !== entry.anchor || entry.host.parentElement !== entry.anchor || entry.anchor.lastElementChild !== entry.host) {
+      const style = getComputedStyle(entry.anchor);
+      const compatible = style.display === 'block' || (style.display === 'flex' && style.flexDirection === 'column');
+      if (list?.length !== 1 || list[0] !== entry.anchor || entry.host.parentElement !== entry.anchor || entry.anchor.lastElementChild !== entry.host || !compatible) {
         sizes.unobserve(entry.anchor); removeHost(entry.host); mounts.delete(id);
       }
     }
     for (const [id, nodes] of candidates) {
-      if (nodes.length !== 1) continue;
+      if (nodes.length !== 1) { diagnostics.ambiguousAnchors++; continue; }
       const anchor = nodes[0];
       if (mounts.has(id)) { render(mounts.get(id).host, rows.get(id)); continue; }
       const before = anchor.getBoundingClientRect();
       const style = getComputedStyle(anchor);
-      if (before.width <= 0 || before.height <= 0 || before.bottom < 0 || before.top >= innerHeight
-        || !(style.display === 'block' || (style.display === 'flex' && style.flexDirection === 'column'))) continue;
+      if (!(style.display === 'block' || (style.display === 'flex' && style.flexDirection === 'column'))) { diagnostics.unsupportedLayout++; continue; }
+      if (before.width <= 0 || before.height <= 0 || before.bottom < 0 || before.top >= innerHeight) continue;
       const host = document.createElement('div');
       host.dataset.tokenbarOwned = 'usage'; host.dataset.tokenbarTurn = id;
       host.style.cssText = 'display:block;position:static;flex:0 0 auto;min-width:0;width:100%;box-sizing:border-box';
@@ -124,13 +133,13 @@ export function installUsageView(readContext) {
         .panel h4{margin:0 0 10px;font:inherit;font-weight:600}
         dl{display:grid;grid-template-columns:1fr auto;gap:6px 24px;margin:0}
         dt{opacity:.78}dd{margin:0;text-align:right;font-weight:600}
-      </style><div class="bar" role="note" aria-label="Token 使用统计"><button class="toggle" type="button" aria-label="展开本轮用量详情" aria-expanded="false" aria-controls="usage-details"><span><small>本轮</small> <strong></strong></span><span><small>缓存</small> <strong></strong></span><span><small>本对话累计</small> <strong></strong></span><span><small>累计缓存</small> <strong></strong></span></button></div><section id="usage-details" class="panel" aria-label="本轮用量详情" hidden><h4>本轮用量</h4><dl><dt>输入 Token</dt><dd data-detail="input"></dd><dt>输出 Token</dt><dd data-detail="output"></dd><dt>整轮平均速度</dt><dd data-detail="speed"></dd><dt>时长</dt><dd data-detail="duration"></dd></dl></section>`;
+      </style><div class="bar" role="note" aria-label="Token 使用统计"><button class="toggle" type="button" aria-label="展开本轮用量详情" aria-expanded="false" aria-controls="usage-details"><span><small>本轮</small> <strong></strong></span><span><small>缓存</small> <strong></strong></span><span><small>本对话累计</small> <strong></strong></span><span><small>累计缓存</small> <strong></strong></span></button></div><section id="usage-details" class="panel" aria-label="本轮用量详情" hidden><h4>本轮用量</h4><dl><dt>输入 Token</dt><dd data-detail="input"></dd><dt>输出 Token</dt><dd data-detail="output"></dd><dt>平均速度</dt><dd data-detail="speed"></dd><dt>时长（扣除工具）</dt><dd data-detail="duration"></dd></dl></section>`;
       render(host, rows.get(id));
       const children = [...anchor.children];
       internalNodes.add(host); anchor.append(host);
       const h = host.getBoundingClientRect(), a = anchor.getBoundingClientRect();
       const bottom = Math.max(a.top, ...children.map((n) => n.getBoundingClientRect().bottom));
-      if (h.height < 20 || h.width <= 0 || h.top < bottom - 1 || h.left < a.left - 1 || h.right > a.right + 1 || h.bottom > a.bottom + 1) { removeHost(host); continue; }
+      if (h.height < 20 || h.width <= 0 || h.top < bottom - 1 || h.left < a.left - 1 || h.right > a.right + 1 || h.bottom > a.bottom + 1) { diagnostics.invalidGeometry++; removeHost(host); continue; }
       const toggle = host.shadowRoot.querySelector('.toggle');
       const panel = host.shadowRoot.querySelector('.panel');
       panel.setAttribute('popover', 'auto');
@@ -154,6 +163,10 @@ export function installUsageView(readContext) {
       mounts.set(id, { anchor, host }); sizes.observe(anchor);
     }
   }
+  function reconcile() {
+    try { reconcileLayout(); }
+    catch { clear(); diagnostics = { reason: 'layout-inspection-failed' }; }
+  }
   function schedule() { if (!stopped) { clearTimeout(timer); timer = setTimeout(reconcile, 50); } }
   observer = new MutationObserver((records) => {
     const consumed = new Set();
@@ -171,7 +184,7 @@ export function installUsageView(readContext) {
     if (meaningful) schedule();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
-    attributeFilter: ['data-app-shell-active-page', 'aria-hidden', 'inert', 'data-above-composer-conversation-id', 'data-content-search-turn-key', 'data-turn-key'] });
+    attributeFilter: ['data-app-shell-active-page', 'aria-hidden', 'inert', 'data-above-composer-conversation-id', 'data-content-search-turn-key', 'data-turn-key', 'class', 'style'] });
   sizes = new ResizeObserver(schedule);
   window.addEventListener('scroll', schedule, { capture: true, passive: true });
   window.addEventListener('resize', schedule, { passive: true });
@@ -181,7 +194,9 @@ export function installUsageView(readContext) {
     stop: () => stop(true),
     update(next) {
       data = next && uuid.test(next.threadId ?? '') && Array.isArray(next.rows) ? next : { threadId: null, rows: [] };
-      renew(); reconcile(); return { ok: true, mountedRows: mounts.size };
+      renew(); reconcile(); return { ok: true, mountedRows: mounts.size, diagnostics,
+        reason: diagnostics.reason ?? (diagnostics.ambiguousAnchors ? 'ambiguous-reply-anchors'
+          : diagnostics.unsupportedLayout ? 'unsupported-reply-layout' : diagnostics.invalidGeometry ? 'unsafe-mount-geometry' : null) };
     },
   };
   renew();

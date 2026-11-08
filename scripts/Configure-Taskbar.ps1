@@ -1,9 +1,10 @@
 ﻿[CmdletBinding()]
-param([ValidateSet('Inspect','Apply','Restore')][string]$Mode = 'Inspect', [switch]$GeneratedOnly)
+param([ValidateSet('Inspect','Apply','Restore')][string]$Mode = 'Inspect', [switch]$GeneratedOnly, [string]$LauncherPath)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if (!('TokenBar.TaskbarIdentity' -as [type])) { Add-Type -Path (Join-Path $root 'src\TaskbarIdentity.cs') }
-$target = Join-Path $root 'outputs\Codex-TokenBar.exe'
+$target = if ($LauncherPath) { [IO.Path]::GetFullPath($LauncherPath) } else { Join-Path $root 'outputs\Codex-TokenBar.exe' }
+if ($target -notin @((Join-Path $root 'Codex-TokenBar.exe'), (Join-Path $root 'outputs\Codex-TokenBar.exe'))) { throw 'Launcher must belong to this TokenBar directory.' }
 $pinDirectory = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
 $pinnedPath = Join-Path $pinDirectory 'Codex-TokenBar.lnk'
 $backup = Join-Path $root 'work\taskbar-identity-original.json'

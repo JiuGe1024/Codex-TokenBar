@@ -111,3 +111,37 @@ test('ordinary ChatGPT pages and contradictory turn identifiers never receive st
     assert.equal(update().mountedRows, 0);
   } finally { dom.window.close(); }
 });
+
+test('layout changes remove existing mounts and report a reason without affecting native content', async () => {
+  const { dom, document, update, settle } = fixture();
+  try {
+    update();
+    const anchor = document.querySelector('[data-local-conversation-final-assistant]');
+    anchor.style.flexDirection = 'row';
+    await settle();
+    const result = update();
+    assert.equal(result.mountedRows, 0);
+    assert.equal(result.reason, 'unsupported-reply-layout');
+    assert.equal(result.diagnostics.unsupportedLayout, 1);
+    assert.equal(anchor.querySelector('p').textContent, 'Native content');
+    anchor.style.flexDirection = 'column';
+    assert.equal(update().mountedRows, 1);
+    dom.window.getComputedStyle = () => { throw new Error('fixture incompatible layout'); };
+    assert.equal(update().reason, 'layout-inspection-failed');
+    assert.equal(document.querySelectorAll('[data-tokenbar-owned]').length, 0);
+  } finally { dom.window.close(); }
+});
+
+test('missing browser capabilities reject installation before adding observers or nodes', () => {
+  const { dom, document } = fixture();
+  try {
+    dom.window.__codexTokenBar.stop();
+    const original = document.body.innerHTML;
+    dom.window.ResizeObserver = undefined;
+    const result = dom.window.eval(`(${installUsageView})(${pageContext})`);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'unsupported-browser-capabilities');
+    assert.equal(document.body.innerHTML, original);
+    assert.equal(dom.window.__codexTokenBar, undefined);
+  } finally { dom.window.close(); }
+});

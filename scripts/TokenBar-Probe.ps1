@@ -4,7 +4,8 @@ param(
   [ValidateRange(1024,65535)][int]$Port = 9337,
   [string]$AnchorSelector,
   [switch]$Launch,
-  [switch]$CheckOnly
+  [switch]$CheckOnly,
+  [switch]$VerifyOnly
 )
 $ErrorActionPreference = 'Stop'
 $package = @(Get-AppxPackage -Name OpenAI.Codex)
@@ -14,7 +15,7 @@ $manifest = [xml](Get-Content -LiteralPath (Join-Path $package.InstallLocation '
 $application = @($manifest.Package.Applications.Application | Where-Object { $_.Executable -match '(^|[/\\])ChatGPT\.exe$' })
 if ($application.Count -ne 1) { throw 'Codex application entry is not unique.' }
 $desktopPath = [IO.Path]::GetFullPath((Join-Path $package.InstallLocation $application[0].Executable))
-$nodePath = (Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$nodePath = (& (Join-Path $PSScriptRoot 'Resolve-Node.ps1'))
 $nodeMajor = [int]((& $nodePath --version).TrimStart('v').Split('.')[0])
 if ($nodeMajor -lt 22) { throw 'Node.js 22 or newer is required.' }
 if ($Mode -eq 'Mount' -and [string]::IsNullOrWhiteSpace($AnchorSelector)) { throw 'Inspect the live DOM first; then explicitly supply -AnchorSelector.' }
@@ -43,6 +44,14 @@ function Assert-TokenBarListener($Listeners) {
 }
 
 $listeners = @(Get-TokenBarListeners)
+if ($VerifyOnly) {
+  if ($listeners.Count) { Assert-TokenBarListener $listeners }
+  $running = @(Get-Process -Name ChatGPT -ErrorAction SilentlyContinue | Where-Object {
+    [string]::Equals($_.Path, $desktopPath, [StringComparison]::OrdinalIgnoreCase)
+  })
+  [pscustomobject]@{ cdpAvailable=($listeners.Count -gt 0); officialRunning=($running.Count -gt 0) } | ConvertTo-Json
+  return
+}
 if ($CheckOnly) {
   if ($listeners.Count) { Assert-TokenBarListener $listeners }
   [pscustomobject]@{ packageVersion=[string]$package.Version; nodeMajor=$nodeMajor; cdpAvailable=($listeners.Count -gt 0); action='check-only-no-launch' } | ConvertTo-Json

@@ -97,10 +97,10 @@ export function projectUsageRecord(line) {
     payload: { thread_id: true, turn_id: true, root_turn_id: true, response_id: true,
       usage: usageFields, turn_token_usage: usageFields, thread_token_usage: usageFields },
   });
-  if (kind.type !== 'event_msg' || !['task_started', 'task_complete', 'token_count'].includes(kind.payload?.type)) return null;
-  return projectJson(line, { type: true, ordinal: true, payload: {
+  if (kind.type !== 'event_msg' || !['task_started', 'task_complete', 'token_count', 'item_completed'].includes(kind.payload?.type)) return null;
+  return projectJson(line, { type: true, ordinal: true, timestamp: true, payload: {
     type: true, turn_id: true, turn_attribution: attribution,
-    duration_ms: true,
+    duration_ms: true, started_at_ms: true, completed_at_ms: true, item: { id: true, type: true, kind: true },
     info: { total_token_usage: usageFields },
   } });
 }
