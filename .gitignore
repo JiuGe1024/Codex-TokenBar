@@ -1,0 +1,7 @@
+/work/
+/node_modules/
+/outputs/
+/STATE.md
+/HANDOFF.md
+/scripts/Start-TokenBar.local.ps1
+*.log
