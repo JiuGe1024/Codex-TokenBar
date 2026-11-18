@@ -49,6 +49,8 @@ test('per-turn details toggle independently, survive updates and show missing ti
     const toggle = root.querySelector('.toggle');
     const panel = root.querySelector('.panel');
     assert.equal(panel.querySelector('.hint'), null);
+    assert.equal(panel.querySelectorAll('dt svg[aria-hidden="true"]').length, 4);
+    assert.deepEqual([...panel.querySelectorAll('dt')].map(n => n.textContent), ['输入 Token', '输出 Token', '平均速度', '时长（扣除工具）']);
     const host = document.querySelector('[data-tokenbar-owned]');
     const height = host.getBoundingClientRect().height;
     assert.equal(panel.hidden, true);

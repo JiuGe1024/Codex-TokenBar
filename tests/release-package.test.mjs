@@ -7,6 +7,33 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 const run = promisify(execFile);
 const windows = { skip: process.platform !== 'win32' };
+test('launcher-only build embeds an icon even without an installed Codex', windows, async () => {
+  const f = await fixture('icon-test-');
+  try {
+    const command = `
+      $ErrorActionPreference='Stop'
+      function Get-AppxPackage { @() }
+      & '${path.resolve('scripts/Build-TokenBar.ps1')}' -LauncherOnly -OutputDirectory '${f.root}' | Out-Null
+      Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class IconResource {
+  public delegate bool NameCallback(IntPtr module, IntPtr type, IntPtr name, IntPtr parameter);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool EnumResourceNames(IntPtr module, IntPtr type, NameCallback callback, IntPtr parameter);
+  [DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr module);
+}
+'@
+      $module=[IconResource]::LoadLibraryEx('${path.join(f.root, 'Codex-TokenBar.exe')}',[IntPtr]::Zero,2)
+      if($module -eq [IntPtr]::Zero){throw 'Cannot load EXE resources'}
+      $script:found=$false
+      try { [void][IconResource]::EnumResourceNames($module,[IntPtr]14,{param($m,$t,$n,$p) $script:found=$true;return $true},[IntPtr]::Zero) }
+      finally { [void][IconResource]::FreeLibrary($module) }
+      if(!$script:found){throw 'EXE is missing its icon resource'}
+    `;
+    await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { windowsHide: true, timeout: 15000 });
+  } finally { await f.cleanup(); }
+});
 async function fixture(prefix) {
   await fs.mkdir('work', { recursive: true });
   const root = await fs.mkdtemp(path.resolve('work/' + prefix));

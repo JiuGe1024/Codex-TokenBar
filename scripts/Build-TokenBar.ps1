@@ -10,11 +10,18 @@ if (!$LauncherOnly -and [IO.Path]::GetFullPath($OutputDirectory) -ne (Join-Path 
 $target = Join-Path $OutputDirectory 'Codex-TokenBar.exe'
 [void](New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force)
 $compilerArgs = @('/nologo', '/target:winexe', '/platform:x64', '/reference:System.Windows.Forms.dll', "/out:$target")
-$package = if (!$LauncherOnly) { @(Get-AppxPackage -Name OpenAI.Codex) } else { @() }
+$package = @(Get-AppxPackage -Name OpenAI.Codex)
+$icon = $null
 if ($package.Count -eq 1) {
   $icon = Join-Path $package[0].InstallLocation 'app\resources\chatgpt-app-dark.ico'
-  if (Test-Path -LiteralPath $icon) { $compilerArgs += "/win32icon:$icon" }
 }
+if (!$icon -or !(Test-Path -LiteralPath $icon)) {
+  Add-Type -AssemblyName System.Drawing
+  $icon = Join-Path $OutputDirectory 'launcher-build.ico'
+  $stream = [IO.File]::Create($icon)
+  try { [Drawing.SystemIcons]::Application.Save($stream) } finally { $stream.Dispose() }
+}
+$compilerArgs += "/win32icon:$icon"
 & $compiler @compilerArgs (Join-Path $root 'src\TokenBarLauncher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed.' }
 if ($LauncherOnly) { Get-FileHash -LiteralPath $target -Algorithm SHA256 | Select-Object Path,Hash; return }

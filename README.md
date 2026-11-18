@@ -87,7 +87,7 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm test
 ```
 
-当前 41 项自动化测试覆盖数据校验、扣除工具后的速度、有限重连、退出清理、依赖检测、首次创建快捷方式及发布包内容。DOM 测试使用 jsdom，真实窗口布局另行检查。性能与验收边界见 [验证记录](docs/validation.md)。
+当前 42 项自动化测试覆盖数据校验、扣除工具后的速度、有限重连、退出清理、依赖检测、首次创建快捷方式及发布包内容。DOM 测试使用 jsdom，真实窗口布局另行检查。性能与验收边界见 [验证记录](docs/validation.md)。
 
 已准备 Windows、Node.js 22/24 测试与标签发布工作流。当前 GitHub 登录凭据缺少 workflow 权限，工作流暂未上传启用。现可通过 Build.cmd 本地测试并打包 ZIP 与校验和。
 

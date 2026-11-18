@@ -119,21 +119,27 @@ export function installUsageView(readContext) {
       host.dataset.tokenbarOwned = 'usage'; host.dataset.tokenbarTurn = id;
       host.style.cssText = 'display:block;position:static;flex:0 0 auto;min-width:0;width:100%;box-sizing:border-box';
       host.attachShadow({ mode: 'open' }).innerHTML = `<style>
-        :host{color:var(--color-text-secondary,var(--text-secondary,inherit));font-family:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",sans-serif}
-        .bar{display:flex;align-items:center;gap:8px;padding:7px 0 5px;box-sizing:border-box;min-height:32px;font-size:12px;line-height:20px;font-variant-numeric:lining-nums tabular-nums}
+        :host{color:var(--color-text-secondary,var(--text-secondary,inherit));font-family:"Times New Roman","Songti SC","SimSun",serif;container-type:inline-size}
+        .bar{display:flex;align-items:center;gap:8px;padding:7px 0 5px;box-sizing:border-box;min-height:32px;font-size:13px;line-height:20px;font-variant-numeric:lining-nums tabular-nums}
         span{display:inline-flex;align-items:baseline;gap:5px;white-space:nowrap}
-        small{font:inherit;opacity:.78}
-        strong{font:inherit;font-weight:600;letter-spacing:.01em}
+        small{font:inherit}
+        strong{font:inherit;font-weight:400}
+        .toggle span:first-child{color:var(--color-text-primary,var(--text-primary,CanvasText))}
+        .toggle span:first-child strong{font-weight:700}
         button{padding:0;min-height:22px;font:inherit;color:inherit;background:transparent;border:0;border-radius:5px;cursor:pointer}
-        .toggle{display:flex;flex:1;flex-wrap:wrap;align-items:center;gap:4px 18px;text-align:left}
+        .toggle{display:flex;flex-wrap:wrap;align-items:center;gap:4px 18px;text-align:left;min-height:28px;padding:2px 4px;margin-left:-4px;max-width:100%;box-sizing:border-box}
         button:hover{opacity:1;background:color-mix(in srgb,currentColor 8%,transparent)}
+        .toggle[aria-expanded="true"]{background:color-mix(in srgb,currentColor 8%,transparent)}
         button:focus-visible{outline:2px solid currentColor;outline-offset:1px}
-        .panel{position:fixed;inset:auto;box-sizing:border-box;width:min(360px,calc(100vw - 16px));margin:0;padding:14px 16px;overflow:auto;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:12px;background:var(--color-bg-primary,var(--color-background,Canvas));color:inherit;box-shadow:0 8px 28px #0002;font-size:13px;line-height:22px;font-variant-numeric:tabular-nums}
+        .panel{position:fixed;inset:auto;box-sizing:border-box;width:min(312px,calc(100vw - 16px));margin:0;padding:14px 16px;overflow:auto;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:12px;background:var(--color-bg-primary,var(--color-background,Canvas));color:var(--color-text-primary,var(--text-primary,CanvasText));box-shadow:0 8px 28px #0002;font-size:14px;line-height:22px;font-variant-numeric:tabular-nums}
         [hidden]{display:none}
         .panel h4{margin:0 0 10px;font:inherit;font-weight:600}
         dl{display:grid;grid-template-columns:1fr auto;gap:6px 24px;margin:0}
-        dt{opacity:.78}dd{margin:0;text-align:right;font-weight:600}
-      </style><div class="bar" role="note" aria-label="Token 使用统计"><button class="toggle" type="button" aria-label="展开本轮用量详情" aria-expanded="false" aria-controls="usage-details"><span><small>本轮</small> <strong></strong></span><span><small>缓存</small> <strong></strong></span><span><small>本对话累计</small> <strong></strong></span><span><small>累计缓存</small> <strong></strong></span></button></div><section id="usage-details" class="panel" aria-label="本轮用量详情" hidden><h4>本轮用量</h4><dl><dt>输入 Token</dt><dd data-detail="input"></dd><dt>输出 Token</dt><dd data-detail="output"></dd><dt>平均速度</dt><dd data-detail="speed"></dd><dt>时长（扣除工具）</dt><dd data-detail="duration"></dd></dl></section>`;
+        dt{display:flex;align-items:center;gap:7px;color:var(--color-text-secondary,var(--text-secondary,inherit))}dd{margin:0;text-align:right;font-weight:700}
+        dt svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+        dt:nth-of-type(3),dd:nth-of-type(3){padding-top:8px}
+        @container (max-width:480px){.toggle{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;column-gap:16px}.toggle span{white-space:normal;flex-wrap:wrap}}
+      </style><div class="bar" role="note" aria-label="Token 使用统计"><button class="toggle" type="button" aria-label="展开本轮用量详情" aria-expanded="false" aria-controls="usage-details"><span><small>本轮</small> <strong></strong></span><span><small>缓存</small> <strong></strong></span><span><small>本对话累计</small> <strong></strong></span><span><small>累计缓存</small> <strong></strong></span></button></div><section id="usage-details" class="panel" aria-label="本轮用量详情" hidden><h4>本轮用量</h4><dl><dt><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2v9m-3-3 3 3 3-3M3 11v3h10v-3"/></svg>输入 Token</dt><dd data-detail="input"></dd><dt><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 11V2M5 5l3-3 3 3M3 11v3h10v-3"/></svg>输出 Token</dt><dd data-detail="output"></dd><dt><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 12a6 6 0 1 1 10 0M8 9l3-4M3 12h10"/><circle cx="8" cy="9" r="1"/></svg>平均速度</dt><dd data-detail="speed"></dd><dt><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>时长（扣除工具）</dt><dd data-detail="duration"></dd></dl></section>`;
       render(host, rows.get(id));
       const children = [...anchor.children];
       internalNodes.add(host); anchor.append(host);
